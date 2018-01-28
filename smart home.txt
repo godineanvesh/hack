@@ -1,0 +1,482 @@
+#include <16f883.h>
+#device ADC=10
+#include <16f870_io.h>
+#use delay(clock=20000000)
+#use rs232(baud=9600,XMIT=PIN_C6,RCV=PIN_C7,stream=BLUT)
+#fuses HS,NOWDT,NOPUT,NOBROWNOUT,PROTECT
+
+
+unsigned char past_joy_stick;
+unsigned long wait_count=0,work_time,i_g;
+unsigned long EMG_R,EMG_L;
+unsigned long RL_rg_single,RL_lg_single;
+unsigned long FB_rg_single,FB_lg_single;
+unsigned long FB_single_count, RL_single_count;
+unsigned long med_R,med_L;
+unsigned long med_scale_L,med_scale_R;
+unsigned char data_receive_1,dir_flag,JOY_STICK;
+short s_flag;
+short start_up;
+short start_flag;
+short stop_flag;
+short dir;
+short engine_flag;
+
+
+#define  R1_FW     portb_0=1;portb_1=0;portb_2=0
+#define  R1_RV     portb_0=1;portb_1=1;portb_2=1
+#define  R1_OFF    portb_0=0;portb_1=0;portb_2=0
+
+#define  R2_FW     portb_3=1;portb_4=0;portb_5=0
+#define  R2_RV     portb_3=1;portb_4=1;portb_5=1    
+#define  R2_OFF    portb_3=0;portb_4=0;portb_5=0
+
+
+
+
+#include <lcd_drive_serial.c>
+
+
+#int_timer1
+void power_count()
+{
+   if(start_flag)
+   {
+         work_time++;
+         if(work_time>10000)
+         {
+            work_time=0;
+            start_flag=0;
+            stop_flag=1;
+         }
+   }
+   
+   if(RL_rg_single || RL_lg_single)
+   {
+         RL_single_count++;
+   }
+   
+   if(FB_rg_single || FB_lg_single)
+   {
+         FB_single_count++;
+   }
+   set_timer1(0xfd8e);  //1ms
+}
+
+
+void init_ext_intrpt()
+{
+   enable_interrupts(global);
+   enable_interrupts(INT_RDA);
+  
+}
+
+
+void adc_intial()
+{
+  setup_adc_ports(sAN0|sAN1|sAN2|sAN3);
+  setup_adc(ADC_CLOCK_INTERNAL);
+  delay_ms(100);
+}
+
+void timer_intials()     //2.8us
+{
+    enable_interrupts(GLOBAL);
+    enable_interrupts(int_timer1);
+    setup_timer_1(T1_INTERNAL|T1_DIV_BY_8 );  
+}
+
+
+
+void power_scan()
+{
+   //0.62 - 31
+   //0.89 - 14.43
+   //  /0.89 - 14.43
+     unsigned long ran,ran_count=0;
+        
+     ran=0;
+      set_adc_channel(0);
+        delay_us(40);
+    
+      ran = read_adc();
+       if(ran<120)
+       {
+         JOY_STICK= 'F';
+         if(start_flag)work_time=0;
+       }
+       else if(ran>722)
+       {
+            JOY_STICK = 'B';
+            if(start_flag)work_time=0;
+       }
+        else if(JOY_STICK!='S')
+        {
+            JOY_STICK = 'S';
+        }
+    
+      
+      
+      
+      ran=0;
+      set_adc_channel(1);
+      delay_us(40);
+      
+      ran = read_adc();
+      if(ran<120)
+      {
+         JOY_STICK = 'R';
+         if(start_flag)work_time=0;
+      }
+       else if(ran>722)
+       {
+         JOY_STICK = 'L';
+         if(start_flag)work_time=0;
+       }
+      
+    
+   
+}
+
+
+void movement()
+{
+       if(JOY_STICK=='F')
+                     {
+                       if(past_joy_stick!=JOY_STICK)
+                       {
+                            lcd_write(0x80,0);
+                            printf(lcd_write_string,"FOW         ");  
+                          
+                            
+                           R1_FW;
+                           R2_FW;
+                           delay_ms(500);
+                              past_joy_stick='F';
+                       }
+                     }
+                     else  if(JOY_STICK=='B')
+                      {
+                          if(past_joy_stick!=JOY_STICK)
+                       {
+                            lcd_write(0x80,0);
+                            printf(lcd_write_string,"REV         ");  
+                           
+                           R1_RV;
+                           R2_RV;
+                           delay_ms(500);
+                           past_joy_stick='B';
+                       }
+                     }
+                     
+                     else  if(JOY_STICK=='R')
+                     {
+                     
+                        if(past_joy_stick!=JOY_STICK)
+                       {
+                         lcd_write(0x80,0);
+                         printf(lcd_write_string,"RIG         ");  
+                           
+                        R1_RV;
+                        R2_FW;
+                        delay_ms(500);
+                        past_joy_stick='R';
+                       }
+                     }
+                     else  if(JOY_STICK=='L')
+                     {
+                        if(past_joy_stick!=JOY_STICK)
+                       {
+                            lcd_write(0x80,0);
+                            printf(lcd_write_string,"LEF         ");  
+                           
+                           R1_FW;
+                           R2_RV;
+                           delay_ms(500);
+                           past_joy_stick='L';
+                       }
+                     }
+                     
+                     else  if(JOY_STICK=='S')
+                     {
+                       if(past_joy_stick!=JOY_STICK)
+                       {
+                            lcd_write(0x80,0);
+                            printf(lcd_write_string,"STOP         ");  
+                           R2_OFF ;
+                           R1_OFF ;
+                          
+                           delay_ms(500);
+                           past_joy_stick='S';
+                       }
+                     }
+
+}
+
+
+void med_scan()
+{
+      unsigned long ran,ran_count=0;
+        
+     ran=0;
+      set_adc_channel(2);
+        delay_us(40);
+    
+       med_R=read_adc();
+       
+        ran=0;
+      set_adc_channel(3);
+        delay_us(40);
+      
+      med_L=read_adc();
+       
+      lcd_write(0x80,0);
+      printf(lcd_write_string,"%03lu   %03lu    ",med_R,med_L);  
+      
+      if(med_R<50)
+      {
+            med_scale_R=med_R;
+      }
+  
+      
+      if(med_L<50)
+      {
+            med_scale_L=med_L;
+      }
+     
+       
+}
+
+void emg_signle_scan()
+{
+   
+   set_adc_channel(2);
+   delay_us(40);
+   EMG_R=read_adc();
+   
+   set_adc_channel(3);
+   delay_us(40);
+   EMG_L=read_adc();
+   
+   
+   if( EMG_R>(med_R+50))
+   {
+       
+        dir=0; 
+        for(i_g=0;i_g<=200;i_g++)
+        {
+            set_adc_channel(2);
+            delay_ms(1);
+            EMG_R=read_adc();
+             if( EMG_R>(med_R+50))
+             {
+                 dir=1;  
+                 break;
+             }
+        }
+                if( dir==0)
+                {
+                       lcd_write(0x80,0);
+                       printf(lcd_write_string,"      FOR    ");  
+                     
+                       JOY_STICK='F';  
+                       movement();
+                       delay_ms(1000);
+                       RL_single_count=0;
+                       RL_rg_single=0;
+                       RL_lg_single=0;
+                         JOY_STICK='S';
+                      movement();
+                       lcd_write(0x80,0);
+                  printf(lcd_write_string,"SCAN      "); 
+                }
+                
+                 if( dir==1)
+                {
+                       lcd_write(0x80,0);
+                       printf(lcd_write_string,"      RIG    ");  
+                     
+                       JOY_STICK='R';  
+                       movement();
+                       delay_ms(1000);
+                       RL_single_count=0;
+                       RL_rg_single=0;
+                       RL_lg_single=0;
+                         JOY_STICK='S';
+                      movement();
+                       lcd_write(0x80,0);
+                  printf(lcd_write_string,"SCAN      "); 
+                }
+   
+   }
+   else  if( EMG_L>(med_L+50))
+   {
+       
+        dir=0; 
+        for(i_g=0;i_g<=200;i_g++)
+        {
+            set_adc_channel(3);
+            delay_ms(1);
+            EMG_L=read_adc();
+             if( EMG_L>         (med_L+50))
+             {
+                 dir=1; 
+                 break;
+             }
+        }
+   
+         if(dir==0)
+         {
+           lcd_write(0x80,0);
+           printf(lcd_write_string,"      REV    ");  
+         
+           JOY_STICK='B';  
+           movement();
+           delay_ms(1000);
+           RL_single_count=0;
+           RL_rg_single=0;
+           RL_lg_single=0;
+             JOY_STICK='S';
+          movement();
+           lcd_write(0x80,0);
+      printf(lcd_write_string,"SCAN      "); 
+         }
+         
+         
+           if(dir==1)
+         {
+           lcd_write(0x80,0);
+           printf(lcd_write_string,"      LEF    ");  
+         
+           JOY_STICK='L';  
+           movement();
+           delay_ms(1000);
+           RL_single_count=0;
+           RL_rg_single=0;
+           RL_lg_single=0;
+             JOY_STICK='S';
+          movement();
+           lcd_write(0x80,0);
+            printf(lcd_write_string,"SCAN      "); 
+         }
+   
+   
+   }
+   
+ 
+   
+   if(RL_single_count>2000  )
+   {
+      JOY_STICK='S';
+      RL_single_count=0;
+      RL_rg_single=0;
+      RL_lg_single=0;
+   }
+   
+   
+   
+  
+   
+   
+   
+   
+}
+
+
+
+
+void main()
+{
+     short mode;
+     start_up=1;
+     trisa=0x0f;
+     trisc=0x80;
+     trisb=0xc0;
+ 
+     
+     R1_OFF ;
+     R2_OFF ;
+     
+    
+  
+     
+     lcd_int();
+     delay_ms(500);
+     timer_intials();
+      lcd_write(0x80,0);
+      printf(lcd_write_string,"STOP      ");  
+     
+      adc_intial();
+      dir_flag=0;
+   
+        R1_OFF ;
+        R2_OFF ;
+    
+      JOY_STICK = 'S';
+          start_flag=1;                  
+   past_joy_stick='O';
+   med_scan();
+   FB_rg_single=0;
+    FB_lg_single=0;
+    RL_rg_single=0; 
+    RL_lg_single=0;
+   while(true)
+   {
+        if(portb_6==0)
+        {
+            delay_ms(50);
+             if(portb_6==0)
+             {
+                JOY_STICK = 'S';
+                     movement();
+                   lcd_write(0x80,0);
+                  printf(lcd_write_string,"  REFERENCE     ");  
+                  med_scan();
+                  delay_ms(500);
+             }
+        }
+       
+      
+         
+                 if(portb_7==0)
+                  {
+                     if(mode)
+                     {
+                           R2_OFF ;
+                           R1_OFF ;
+                          
+                           delay_ms(500);
+                     }
+                            mode=0;
+                            
+                                power_scan();
+                                    movement();
+            
+            
+                  }
+                  
+                  
+                  if(portb_7==1)
+                  {
+                     if(mode==0)
+                     {
+                           R2_OFF ;
+                           R1_OFF ;
+                          
+                           delay_ms(500);
+                     }
+                        mode=1;
+                       emg_signle_scan();        
+                      
+                  }
+         
+         
+        
+       
+     
+          
+             
+   }
+        
+  
+}
